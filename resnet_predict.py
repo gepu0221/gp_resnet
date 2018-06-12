@@ -17,7 +17,7 @@ tf.flags.DEFINE_string("data_dir", "label_list", "path to dataset")
 tf.flags.DEFINE_float("learning_rate", "1e-4", "Learning rate for Adam Optimizer")
 tf.flags.DEFINE_string("model_dir", "Model/", "Path to vgg model mat")
 tf.flags.DEFINE_bool('debug', "False", "Debug mode: True/ False")
-tf.flags.DEFINE_string('mode', "train", "Mode train/ test/ visualize")
+tf.flags.DEFINE_string('mode', "test", "Mode train/ test/ visualize")
 #tf.flags.DEFINE_string('mode', "visualize", "Mode train/ test/ visualize")
 
 MODEL_NAME = "imagenet-resnet-101-dag.mat"
@@ -166,7 +166,8 @@ def main(argv=None):
     keep_probability = tf.placeholder(tf.float32, name="keep_probabilty")
     image = tf.placeholder(tf.float32, shape=[None, IMAGE_SIZE, IMAGE_SIZE, 3], name="input_image")
     annotation = tf.placeholder(tf.int32, shape=[None, 1], name="annotation")
-    
+    one_hot_anno = tf.placeholder(tf.int32, shape=[None, NUM_OF_CLASSESS], name="one_hot_anno")
+
     #logits = inference(image, keep_probability)
     pred_annotation, logits = inference(image, keep_probability)
     #tf.summary.image("input_image", image, max_outputs=2)
@@ -178,6 +179,11 @@ def main(argv=None):
     loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits,
                                                                           labels=tf.squeeze(annotation, squeeze_dims=[1]),
                                                                           name="entropy"))
+    softmax_pro = tf.nn.softmax(logits, name='soft_pro')
+    '''
+    sigmoid_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=softmax_pro, 
+                                                           labels=one_hot_anno,
+                                                           name='sigmoid_entropy')'''
     tf.summary.scalar("entropy", loss)
     trainable_var = tf.trainable_variables()
     if FLAGS.debug:
@@ -196,9 +202,10 @@ def main(argv=None):
   
     print("Setting up dataset reader")
     image_options = {'resize': True, 'resize_size': IMAGE_SIZE}
-    if FLAGS.mode == 'train':
-        train_dataset_reader = dataset.BatchDatset(train_records, image_options)
-    validation_dataset_reader = dataset.BatchDatset(valid_records, image_options)
+    if FLAGS.mode == 'validation':
+        validation_dataset_reader = dataset.BatchDatset(valid_records, image_options)
+    elif FLAGS.mode == 'test':
+        test_dataset_reader = dataset.BatchDatset(test_records, image_options)
 
     sess = tf.Session()
 
@@ -213,25 +220,69 @@ def main(argv=None):
         saver.restore(sess, ckpt.model_checkpoint_path)
         print("Model restored...")
 
-    if FLAGS.mode == "train":
-        for itr in xrange(MAX_ITERATION):
-            train_images, train_annotations = train_dataset_reader.next_batch(FLAGS.batch_size)
-            feed_dict = {image: train_images, annotation: train_annotations, keep_probability: 0.85}
-            sess.run(train_op, feed_dict=feed_dict)
-            if itr % 10 == 0:
-                train_loss, summary_str = sess.run([loss, summary_op], feed_dict=feed_dict)
-            
-            if itr % 10 == 0:
-                train_loss, summary_str = sess.run([loss, summary_op], feed_dict=feed_dict)
-                print("Step: %d, Train_loss:%g" % (itr, train_loss))
-                summary_writer.add_summary(summary_str, itr)
+    if FLAGS.mode == "validation":
+        count=0
+        p_count=0
+        if_con=True
+        turn=0
+        loss_=0
+        while if_con:
+            turn=turn+1
+            valid_images, valid_annotations, valid_filenames, if_con, start, end=validation_dataset_reader.next_batch_valid(FLAGS.batch_size)
+            #one_hot_annotations = utils.one_hot_convert(valid_annotations)
+            valid_loss,pred_anno=sess.run([loss,pred_annotation],feed_dict={image:valid_images,
+            #valid_loss,pred_anno,valid_sigmoid_loss=sess.run([loss,pred_annotation,sigmoid_loss],feed_dict={image:valid_images,
+                                                                                                            annotation:valid_annotations,
+                                                                                                            #one_hot_anno:one_hot_annotations, 
+                                                                                                            keep_probability:1.0})
+            loss_ += valid_loss
+            len_ = len(pred_anno)
+            #pred_anno = np.expand_dims(pred_anno, axis=1)
+            for i in range(len_):
+                count +=1
+                #print('valid_annotation: %d, pred_anno: %d'%(valid_annotations[i][0], pred_anno[i][0]))
+                #print('valid_annotation: ', valid_annotations[i][0], 'pred_anno: ',pred_anno[i][0])               
+                if int(valid_annotations[i][0]) == int(pred_anno[i][0]):
+                    p_count += 1
+                    #print('p_count : %d' % p_count)
+            print('Turn%d: valid_loss: %g' % (turn, valid_loss))
+            #print('Turn%d: valid_sigmoid_loss: %g' % (turn, valid_sigmoid_loss))
+        print('precision: %g' % (p_count/count*100))
+        print('mean loss: %g' % (loss_/turn))
+           
+    elif FLAGS.mode == "test":
+       f = open('re.txt', 'w')
+       f_ = open('re_.txt', 'w')
+       count=0
+       p_count=0
+       if_con=True
+       turn=0
+       loss_=0
+       while if_con:
+           turn=turn+1
+           valid_images, valid_annotations, valid_filenames, if_con, start, end=test_dataset_reader.next_batch_valid(FLAGS.batch_size)
+           #one_hot_annotations = utils.one_hot_convert(valid_annotations)
+           valid_loss,pred_anno,softmax_pro_=sess.run([loss,pred_annotation,softmax_pro],feed_dict={image:valid_images,
+           #valid_loss,pred_anno,valid_sigmoid_loss=sess.run([loss,pred_annotation,sigmoid_loss],feed_dict={image:valid_images,
+                                                                                                           annotation:valid_annotations,
+                                                                                                           #one_hot_anno:one_hot_annotations, 
+                                                                                                           keep_probability:1.0})
+           loss_ += valid_loss
+           len_ = len(pred_anno)
+           #pred_anno = np.expand_dims(pred_anno, axis=1)
+           for i in range(len_):
+               count +=1
+               f.write('%d %g\n' % (count, softmax_pro_[i][1]))
+               f_.write('%g\n' %  softmax_pro_[i][1])   
+               if valid_annotations[i][0] == pred_anno[i][0]:
+                   p_count += 1
+           print('Turn%d: valid_loss: %g' % (turn, valid_loss))
+           #print('Turn%d: valid_sigmoid_loss: %g' % (turn, valid_sigmoid_loss))
+       print('precision: %g' % (p_count/count*100))
+       print('mean loss: %g' % (loss_/turn))   
+       f.close()
+       f_.close()
 
-            if itr % 10 == 0:
-                valid_images, valid_annotations = validation_dataset_reader.next_batch(FLAGS.batch_size)
-                valid_loss = sess.run(loss, feed_dict={image: valid_images, annotation: valid_annotations,
-                                                       keep_probability: 1.0})
-                print("%s ---> Validation_loss: %g" % (datetime.datetime.now(), valid_loss))
-                saver.save(sess, FLAGS.logs_dir + "model.ckpt", itr)
 
            
         

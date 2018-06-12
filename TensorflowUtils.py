@@ -239,3 +239,8 @@ def add_activation_summary(var):
 def add_gradient_summary(grad, var):
     if grad is not None:
         tf.summary.histogram(var.op.name + "/gradient", grad)
+
+
+#add by gp
+def one_hot_convert(labels, class_num):
+    return np.eye(class_num)[labels.reshape(-1)].T
